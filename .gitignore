@@ -1,6 +1,5 @@
 # Secretos y configuración local
 .env
-config.yaml
 
 # Base de datos local
 *.db

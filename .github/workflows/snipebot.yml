@@ -1,0 +1,44 @@
+name: SnipeBot
+
+on:
+  schedule:
+    # 09:00 UTC diario. Ajusta la hora aqui si quieres otra franja
+    # (recuerda: UTC, no hora local de Espana).
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: snipebot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar ciclo de vigilancia
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      - name: Guardar historico de deduplicacion
+        run: |
+          git config user.name "snipebot-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f data/snipebot.db data/snipebot.db-wal data/snipebot.db-shm 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: actualizar historico de notificados"
+            git push
+          fi

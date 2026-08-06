@@ -1,0 +1,22 @@
+# config.yaml está en .gitignore: es tuyo y no se commitea.
+
+searches:
+  - platform: vinted
+    query: "ps5"
+    price_threshold: 400
+    seller_rating_threshold: 4.5
+    min_price: 300
+    min_seller_reviews: 3
+    allow_unknown_rating: false
+    min_condition: "muy bueno"
+    max_results: 40
+
+scraping:
+  request_delay_seconds: 3.0
+  timeout_seconds: 20.0
+  max_retries: 3
+  backoff_base_seconds: 5.0
+  fetch_seller_details: true
+
+database_path: data/snipebot.db
+log_level: INFO
