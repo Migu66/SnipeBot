@@ -1,0 +1,20 @@
+{
+  "data": {
+    "section": {
+      "payload": {
+        "items": [
+          {
+            "content": {
+              "id": "xyz789",
+              "title": "Fujifilm X100V nuevo formato",
+              "price": { "amount": 780, "currency": "EUR" },
+              "web_slug": "fujifilm-x100v-xyz789",
+              "images": [{ "urls": { "original": "https://img.wallapop.com/xyz789.jpg" } }],
+              "user": { "id": "seller3" }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+# Copia este fichero a config.yaml y ajústalo a tu búsqueda.
+# config.yaml está en .gitignore: es tuyo y no se commitea.
+
+# Solo Vinted por ahora: el scraper de Wallapop existe en el código
+# (scrapers/wallapop.py) pero su endpoint real todavía no funciona (ver
+# CLAUDE.md -> "Estado del proyecto"). Cuando se arregle, se puede añadir
+# aquí otra entrada con platform: wallapop igual que la de abajo.
+searches:
+  - platform: vinted
+    query: "fujifilm x100v"
+    price_threshold: 850
+    seller_rating_threshold: 4.5
+    min_price: 200
+    min_seller_reviews: 3
+    allow_unknown_rating: false
+    # Opcional. Estado mínimo aceptado (Vinted lo devuelve tal cual, en
+    # español): "satisfactorio" < "bueno" < "muy bueno" < "nuevo sin
+    # etiquetas" < "nuevo con etiquetas". Sin esta clave no se filtra por
+    # estado. Solo soportado en Vinted (Wallapop no expone este campo).
+    # min_condition: "muy bueno"
+    max_results: 40
+
+scraping:
+  # Segundos mínimos entre peticiones a la MISMA plataforma. No bajar de 2.
+  request_delay_seconds: 3.0
+  timeout_seconds: 20.0
+  # Reintentos ante 429 / 403 / 5xx (con backoff exponencial, nunca inmediatos)
+  max_retries: 3
+  backoff_base_seconds: 5.0
+  # Pedir la ficha del vendedor para conocer su valoración.
+  # Cuesta 1 petición extra por vendedor nuevo (se cachea dentro del ciclo).
+  fetch_seller_details: true
+  # Localización usada por el buscador de Wallapop (por defecto, Madrid).
+  # Sin efecto mientras no haya ninguna búsqueda con platform: wallapop.
+  wallapop_latitude: 40.4168
+  wallapop_longitude: -3.7038
+
+# Ruta de la base de datos SQLite de deduplicación
+database_path: data/snipebot.db
+
+# DEBUG | INFO | WARNING | ERROR
+log_level: INFO

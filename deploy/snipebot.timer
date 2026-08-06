@@ -1,0 +1,11 @@
+[Unit]
+Description=Lanza snipebot.service una vez al dia
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+# Reparte el arranque en una ventana de hasta 5 min para no ser predecible.
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

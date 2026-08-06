@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": 111,
+      "title": "Fujifilm X100V vinted",
+      "url": "https://www.vinted.es/items/111-fujifilm-x100v",
+      "price": { "amount": "820.00", "currency_code": "EUR" },
+      "photo": { "url": "https://images.vinted.net/111.jpg" },
+      "status": "Muy bueno",
+      "user": { "id": 55 }
+    },
+    {
+      "id": 112,
+      "title": "Sin precio vinted",
+      "url": "https://www.vinted.es/items/112",
+      "user": { "id": 56 }
+    }
+  ]
+}

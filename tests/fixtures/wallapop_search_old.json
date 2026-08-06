@@ -1,0 +1,18 @@
+{
+  "search_objects": [
+    {
+      "id": "abc123",
+      "title": "Fujifilm X100V",
+      "price": { "amount": 850, "currency": "EUR" },
+      "web_slug": "fujifilm-x100v-abc123",
+      "images": [{ "urls": { "big": "https://img.wallapop.com/abc123-big.jpg" } }],
+      "user": { "id": "seller1" }
+    },
+    {
+      "id": "missingprice",
+      "title": "Sin precio",
+      "web_slug": "sin-precio",
+      "user": { "id": "seller2" }
+    }
+  ]
+}

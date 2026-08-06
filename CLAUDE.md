@@ -8,6 +8,13 @@ Un asistente de "segunda mano" que vigila Wallapop y/o Vinted en busca de un
 producto concreto (ej. una cámara específica) y avisa por Telegram **solo**
 cuando aparece un anuncio que cumple:
 
+**Estado actual: solo Vinted está activo.** El scraper de Wallapop existe en
+el código pero su endpoint real todavía no funciona (ver "Estado del
+proyecto" más abajo), así que `config.example.yaml` solo trae una búsqueda
+de Vinted. La arquitectura sigue soportando ambas plataformas — cuando se
+arregle Wallapop, basta con añadir una búsqueda con `platform: wallapop` a
+`config.yaml`.
+
 - precio <= `PRICE_THRESHOLD`
 - valoración del vendedor >= `SELLER_RATING_THRESHOLD`
 - el anuncio no se ha notificado ya antes (deduplicación)
@@ -131,9 +138,31 @@ TELEGRAM_CHAT_ID=...
 
 (Actualizar esta sección a medida que avance el proyecto)
 
-- [ ] Scraper Wallapop funcional
-- [ ] Scraper Vinted funcional
-- [ ] Filtro + dedup
-- [ ] Notificador Telegram
-- [ ] main.py orquestando todo
-- [ ] Cron / systemd timer configurado
+- [x] Scraper Vinted funcional y **validado contra la API real**
+      (`www.vinted.es/api/v2/catalog/items`, con cabecera `Referer` — sin
+      ella devuelve 403). Probado en real: trae anuncios correctos.
+- [ ] **Scraper Wallapop NO funcional todavía.** El endpoint viejo
+      (`api/v3/search`) está deprecado (400 constante). Se localizó el
+      endpoint real actual (`api/v3/search/section`, sacado de los bundles
+      JS de es.wallapop.com) y la cabecera que exige su WAF (`X-DeviceOS`),
+      pero con los parámetros documentados en el propio JS del frontend
+      sigue devolviendo `400 {"status":400,"message":"","errors":[]}` sin
+      más detalle — falta al menos un parámetro que no se ha podido
+      identificar por análisis estático del JS. Un Chrome headless real (vía
+      CDP) fue bloqueado con 403 antes de ejecutar nada, probablemente por
+      fingerprinting anti-bot; no se intentó evadirlo (fuera de alcance).
+      Ver la nota de estado al principio de `scrapers/wallapop.py`. Próximo
+      paso: capturar la petición real desde un navegador con sesión humana
+      normal (DevTools -> Network -> XHR, buscar algo en
+      es.wallapop.com/app/search) y comparar contra lo que ya hay.
+- [x] Filtro + dedup
+- [x] Notificador Telegram
+- [x] main.py orquestando todo
+- [x] Cron / systemd timer configurado (`deploy/snipebot.service` +
+      `deploy/snipebot.timer`) y Tarea Programada de Windows
+      (`deploy/register-task.ps1`)
+- [x] Tests (`pytest` + `respx`, 52 tests, verde sin red real)
+- [ ] Crear `config.yaml` y `.env` reales a partir de los `.example` (no se
+      commitean)
+- [ ] Primer ciclo real de punta a punta contra las dos plataformas (Vinted
+      ya validado; Wallapop pendiente de lo de arriba)

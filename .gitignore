@@ -1,0 +1,28 @@
+# Secretos y configuración local
+.env
+config.yaml
+
+# Base de datos local
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Locks de ejecución
+*.lock
+
+# Editores
+.vscode/
+.idea/
