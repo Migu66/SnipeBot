@@ -2,9 +2,9 @@ name: SnipeBot
 
 on:
   schedule:
-    # 09:00 UTC diario. Ajusta la hora aqui si quieres otra franja
-    # (recuerda: UTC, no hora local de Espana).
-    - cron: "0 9 * * *"
+    # Cada 30 min, todo el dia, en UTC. GitHub puede retrasar el disparo
+    # unos minutos bajo carga; no bajar de esta cadencia (ver CLAUDE.md).
+    - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
 concurrency:
