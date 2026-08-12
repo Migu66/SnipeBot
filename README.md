@@ -196,3 +196,20 @@ mano el fichero `<database_path sin extensión>.lock`.
 marcan el anuncio como notificado: se reintentará notificarlo en el próximo
 ciclo. Revisa que el bot token y el chat_id sean correctos y que hayas
 escrito al menos un mensaje al bot antes de sacar el `chat_id`.
+
+**Solo llega un anuncio por ciclo aunque haya varios nuevos.** Dos causas
+posibles, ambas ya corregidas pero a vigilar si reaparecen:
+
+- Telegram limita a ~1 mensaje/segundo por chat y responde 429 si se manda
+  una ráfaga; `notifier.py` ahora espacia los envíos y reintenta respetando
+  `retry_after`. Si un envío agota los reintentos, se loguea y se
+  reintentará en el próximo ciclo (no queda marcado como notificado).
+- En GitHub Actions, el paso "Guardar historico de deduplicacion" hacía
+  `git add -f` de `data/snipebot.db` junto a `.db-wal`/`.db-shm`; como estos
+  dos últimos no existen tras un cierre limpio de SQLite en modo WAL, `git
+  add` abortaba sin añadir *nada* (ni siquiera el `.db`), así que el
+  histórico nunca se comiteaba y cada ciclo arrancaba con la BD vacía. Ahora
+  cada fichero se añade por separado. Si vuelve a pasar, comprueba en el log
+  del workflow que el paso realmente hace `git commit`/`git push` (no solo
+  "success" sin cambios) y que `git log -- data/snipebot.db` avanza entre
+  ejecuciones.

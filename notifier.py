@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import logging
+import time
 
 import httpx
 
@@ -19,11 +20,28 @@ API_BASE = "https://api.telegram.org/bot{token}/{method}"
 CAPTION_LIMIT = 1024
 REQUEST_TIMEOUT = 15.0
 
+# Telegram limita el envío a ~1 mensaje/segundo por chat; por encima de eso
+# responde 429 ("Too Many Requests: retry after N"). Cuando un ciclo tiene
+# varios anuncios nuevos que notificar, sin este throttle+reintento solo el
+# primero se enviaba y el resto se perdía (fallaba, no quedaba marcado como
+# notificado y el siguiente ciclo repetía el mismo cuello de botella).
+MIN_SEND_INTERVAL_SECONDS = 1.1
+MAX_FLOOD_RETRIES = 5
+DEFAULT_FLOOD_WAIT_SECONDS = 2.0
+MAX_FLOOD_WAIT_SECONDS = 60.0
+
 
 class TelegramNotifier:
-    def __init__(self, bot_token: str, chat_id: str) -> None:
+    def __init__(
+        self,
+        bot_token: str,
+        chat_id: str,
+        min_send_interval_seconds: float = MIN_SEND_INTERVAL_SECONDS,
+    ) -> None:
         self._bot_token = bot_token
         self._chat_id = chat_id
+        self._min_send_interval_seconds = min_send_interval_seconds
+        self._last_sent_at: float | None = None
 
     def send_listing(self, listing: Listing) -> bool:
         """Envía un anuncio. Nunca lanza excepciones: devuelve False si falla."""
@@ -68,18 +86,59 @@ class TelegramNotifier:
 
     def _post(self, method: str, payload: dict) -> bool:
         url = API_BASE.format(token=self._bot_token, method=method)
-        try:
-            response = httpx.post(url, json=payload, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
-            data = response.json()
-        except httpx.HTTPError as exc:
-            logger.error("Telegram: fallo de red/HTTP en %s: %s", method, exc)
-            return False
-        except ValueError as exc:
-            logger.error("Telegram: %s no devolvió JSON válido: %s", method, exc)
-            return False
+        attempt = 0
+        while True:
+            self._throttle()
+            try:
+                response = httpx.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+            except httpx.HTTPError as exc:
+                logger.error("Telegram: fallo de red/HTTP en %s: %s", method, exc)
+                return False
 
-        if not data.get("ok"):
-            logger.error("Telegram: %s respondió sin éxito: %s", method, data)
-            return False
-        return True
+            if response.status_code == 429 and attempt < MAX_FLOOD_RETRIES:
+                attempt += 1
+                wait_seconds = self._flood_wait_seconds(response)
+                logger.warning(
+                    "Telegram: %s limitado por control de flood (intento %d/%d), reintentando en %.1fs",
+                    method, attempt, MAX_FLOOD_RETRIES, wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            try:
+                response.raise_for_status()
+                data = response.json()
+            except httpx.HTTPError as exc:
+                logger.error("Telegram: fallo de red/HTTP en %s: %s", method, exc)
+                return False
+            except ValueError as exc:
+                logger.error("Telegram: %s no devolvió JSON válido: %s", method, exc)
+                return False
+
+            if not data.get("ok"):
+                logger.error("Telegram: %s respondió sin éxito: %s", method, data)
+                return False
+            return True
+
+    def _throttle(self) -> None:
+        if self._last_sent_at is not None:
+            elapsed = time.monotonic() - self._last_sent_at
+            remaining = self._min_send_interval_seconds - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_sent_at = time.monotonic()
+
+    def _flood_wait_seconds(self, response: httpx.Response) -> float:
+        try:
+            retry_after = response.json().get("parameters", {}).get("retry_after")
+            if retry_after is not None:
+                return min(float(retry_after), MAX_FLOOD_WAIT_SECONDS)
+        except ValueError:
+            pass
+        header = response.headers.get("Retry-After")
+        if header is not None:
+            try:
+                return min(float(header), MAX_FLOOD_WAIT_SECONDS)
+            except ValueError:
+                pass
+        return DEFAULT_FLOOD_WAIT_SECONDS

@@ -37,7 +37,14 @@ jobs:
         run: |
           git config user.name "snipebot-actions"
           git config user.email "actions@users.noreply.github.com"
-          git add -f data/snipebot.db data/snipebot.db-wal data/snipebot.db-shm 2>/dev/null || true
+          # `git add -f` con varios pathspecs aborta SIN anadir nada si uno solo
+          # no existe (p.ej. -wal/-shm tras un cierre limpio de SQLite en modo
+          # WAL, que los reabsorbe en el .db principal). Por eso se anade cada
+          # fichero por separado: así el .db siempre queda en staging aunque
+          # los sidecar no existan.
+          for f in data/snipebot.db data/snipebot.db-wal data/snipebot.db-shm; do
+            [ -f "$f" ] && git add -f "$f"
+          done
           if ! git diff --cached --quiet; then
             git commit -m "chore: actualizar historico de notificados"
             git push

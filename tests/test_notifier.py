@@ -13,7 +13,7 @@ BOT_BASE = "https://api.telegram.org/bot123:ABC"
 
 @pytest.fixture
 def notifier() -> TelegramNotifier:
-    return TelegramNotifier(bot_token="123:ABC", chat_id="999")
+    return TelegramNotifier(bot_token="123:ABC", chat_id="999", min_send_interval_seconds=0)
 
 
 @respx.mock
@@ -68,6 +68,31 @@ def test_failure_does_not_raise_and_returns_false(notifier, make_listing):
 def test_telegram_ok_false_treated_as_failure(notifier, make_listing):
     respx.post(f"{BOT_BASE}/sendMessage").mock(
         return_value=httpx.Response(200, json={"ok": False, "description": "chat not found"})
+    )
+    listing = make_listing(image_url=None)
+
+    assert notifier.send_listing(listing) is False
+
+
+@respx.mock
+def test_retries_after_flood_control_then_succeeds(notifier, make_listing):
+    route = respx.post(f"{BOT_BASE}/sendMessage")
+    route.mock(
+        side_effect=[
+            httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 0}}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+    listing = make_listing(image_url=None)
+
+    assert notifier.send_listing(listing) is True
+    assert len(route.calls) == 2
+
+
+@respx.mock
+def test_gives_up_after_max_flood_retries(notifier, make_listing):
+    respx.post(f"{BOT_BASE}/sendMessage").mock(
+        return_value=httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 0}})
     )
     listing = make_listing(image_url=None)
 

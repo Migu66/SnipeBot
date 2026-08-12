@@ -3,13 +3,13 @@
 searches:
   - platform: vinted
     query: "ps5"
-    price_threshold: 400
+    price_threshold: 350
     seller_rating_threshold: 4.5
-    min_price: 300
+    min_price: 250
     min_seller_reviews: 3
     allow_unknown_rating: false
     min_condition: "muy bueno"
-    max_results: 40
+    max_results: 100
 
 scraping:
   request_delay_seconds: 3.0
