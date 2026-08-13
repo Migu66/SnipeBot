@@ -1,13 +1,22 @@
-"""Persistencia SQLite: deduplicación de anuncios ya notificados."""
+"""Persistencia SQLite: deduplicación de anuncios ya notificados y ajustes
+cambiados desde Telegram (tabla `settings`).
+
+Los ajustes viven aquí, y no en config.yaml, porque este fichero es el único
+estado que ya sobrevive entre ejecuciones en todos los despliegues (el
+workflow de GitHub Actions comitea `data/snipebot.db` al terminar cada ciclo).
+"""
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import TracebackType
 
 from models import Listing
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS notified_listings (
@@ -19,7 +28,19 @@ CREATE TABLE IF NOT EXISTS notified_listings (
     notified_at TIMESTAMP NOT NULL,
     PRIMARY KEY (platform, id)
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
 """
+
+
+def _like_prefix(prefix: str) -> str:
+    """Patrón LIKE que casa con las claves que empiezan por `prefix` (con ESCAPE '\\')."""
+    escaped = prefix.replace("\\", r"\\").replace("%", r"\%").replace("_", r"\_")
+    return escaped + "%"
 
 
 class Storage:
@@ -45,7 +66,7 @@ class Storage:
             self.init_schema()
 
     def init_schema(self) -> None:
-        self._conn.execute(_SCHEMA)
+        self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
     def is_notified(self, platform: str, listing_id: str) -> bool:
@@ -98,6 +119,56 @@ class Storage:
         cursor = self._conn.execute(
             "DELETE FROM notified_listings WHERE notified_at < ?",
             (cutoff,),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
+    # --- Ajustes (clave/valor) -------------------------------------------
+    #
+    # Una BD creada antes de que existiera la tabla `settings` y abierta en
+    # modo solo-lectura no puede migrarse sobre la marcha (no se puede crear
+    # la tabla), así que las lecturas toleran que no exista y devuelven vacío.
+
+    def _select(self, sql: str, params: tuple = ()) -> list[tuple]:
+        try:
+            return self._conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table: settings" not in str(exc):
+                raise
+            logger.debug("La BD todavía no tiene tabla 'settings'; se trata como vacía")
+            return []
+
+    def get_setting(self, key: str) -> str | None:
+        rows = self._select("SELECT value FROM settings WHERE key = ?", (key,))
+        return rows[0][0] if rows else None
+
+    def get_settings(self, prefix: str = "") -> dict[str, str]:
+        """Devuelve todos los ajustes cuya clave empieza por `prefix`."""
+        rows = self._select(
+            "SELECT key, value FROM settings WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+            (_like_prefix(prefix),),
+        )
+        return {key: value for key, value in rows}
+
+    def set_setting(self, key: str, value: str) -> None:
+        if self.read_only:
+            raise RuntimeError("Storage en modo solo-lectura: no se pueden guardar ajustes")
+        self._conn.execute(
+            """
+            INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (key, value, datetime.now(timezone.utc).isoformat()),
+        )
+        self._conn.commit()
+
+    def delete_settings(self, prefix: str) -> int:
+        """Borra los ajustes cuya clave empieza por `prefix`. Devuelve cuántos borró."""
+        if self.read_only:
+            raise RuntimeError("Storage en modo solo-lectura: no se pueden borrar ajustes")
+        cursor = self._conn.execute(
+            "DELETE FROM settings WHERE key LIKE ? ESCAPE '\\'",
+            (_like_prefix(prefix),),
         )
         self._conn.commit()
         return cursor.rowcount

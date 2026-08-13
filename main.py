@@ -1,5 +1,6 @@
 """Punto de entrada único. Pensado para ser invocado por cron / un timer, no
-como proceso persistente: scrape -> filtra -> deduplica -> notifica, y sale.
+como proceso persistente: lee comandos de Telegram -> scrape -> filtra ->
+deduplica -> notifica, y sale.
 
 Códigos de salida:
   0 - ok (aunque no haya habido resultados nuevos)
@@ -16,6 +17,7 @@ import time
 from pathlib import Path
 from types import TracebackType
 
+import commands
 from config import AppConfig, ConfigError, ScrapingConfig, SearchConfig, load_config
 from filters import apply_filters
 from models import Listing
@@ -92,6 +94,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run", action="store_true", help="No escribe en la BD ni envía nada a Telegram"
     )
+    parser.add_argument(
+        "--no-commands",
+        action="store_true",
+        help="No lee los comandos pendientes de Telegram (sí aplica los ajustes ya guardados)",
+    )
     parser.add_argument("--verbose", action="store_true", help="Log en DEBUG")
     return parser
 
@@ -150,9 +157,15 @@ def run_search(
     return stats
 
 
-def run_cycle(config: AppConfig, storage: Storage, dry_run: bool) -> int:
+def run_cycle(
+    config: AppConfig,
+    storage: Storage,
+    dry_run: bool,
+    notifier: TelegramNotifier | None = None,
+) -> int:
     """Ejecuta todas las búsquedas configuradas. Devuelve el nº de búsquedas que fallaron."""
-    notifier = None if dry_run else TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
+    if notifier is None and not dry_run:
+        notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
 
     totals = {"found": 0, "passed_filter": 0, "new": 0, "sent": 0}
     failures = 0
@@ -203,7 +216,33 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with FileLock(lock_path):
             with Storage(db_path, read_only=args.dry_run) as storage:
-                failures = run_cycle(config, storage, args.dry_run)
+                notifier = (
+                    None
+                    if args.dry_run
+                    else TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
+                )
+
+                # Antes del ciclo, para que un /producto o un /precio recién
+                # enviado ya afecte a esta misma pasada. En dry-run no se lee
+                # nada: la BD está en solo-lectura y no se puede guardar el
+                # offset, así que los comandos se reprocesarían indefinidamente.
+                if notifier is not None and not args.no_commands:
+                    try:
+                        commands.process_updates(notifier, config, storage)
+                    except Exception:
+                        logger.exception(
+                            "Fallo leyendo los comandos de Telegram; se sigue con los ajustes guardados"
+                        )
+
+                config = commands.apply_overrides(config, commands.load_overrides(storage))
+                for search in config.searches:
+                    logger.info(
+                        "Búsqueda activa: %s %r, precio %.2f-%.2f, valoración >= %s",
+                        search.platform, search.query, search.min_price,
+                        search.price_threshold, search.seller_rating_threshold,
+                    )
+
+                failures = run_cycle(config, storage, args.dry_run, notifier)
     except LockError as exc:
         # No hay código de salida propio para "ya hay un ciclo en marcha" en el
         # plan; se trata como fallo del ciclo (2), ya que no se ejecutó ninguna búsqueda.

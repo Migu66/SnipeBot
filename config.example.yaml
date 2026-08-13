@@ -1,5 +1,9 @@
 # Copia este fichero a config.yaml y ajústalo a tu búsqueda.
-# config.yaml está en .gitignore: es tuyo y no se commitea.
+#
+# `query`, `price_threshold` y `min_price` también se pueden cambiar sobre la
+# marcha desde Telegram (/producto, /precio, /preciomin) sin volver a tocar
+# este fichero: lo de aquí es el valor por defecto al que vuelve /reset.
+# Ver README -> "Comandos de Telegram".
 
 # Solo Vinted por ahora: el scraper de Wallapop existe en el código
 # (scrapers/wallapop.py) pero su endpoint real todavía no funciona (ver

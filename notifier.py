@@ -1,4 +1,5 @@
-"""Envío de notificaciones a Telegram vía Bot API.
+"""Cliente de la Bot API de Telegram: envío de notificaciones y lectura de los
+comandos que llegan al chat (`getUpdates`, ver commands.py).
 
 Un fallo de envío se loguea y no propaga: no debe tumbar el ciclo ni marcar
 el anuncio como notificado (eso lo decide quien llame, en main.py).
@@ -43,6 +44,11 @@ class TelegramNotifier:
         self._min_send_interval_seconds = min_send_interval_seconds
         self._last_sent_at: float | None = None
 
+    @property
+    def chat_id(self) -> str:
+        """Chat autorizado. commands.py lo usa para ignorar mensajes de terceros."""
+        return self._chat_id
+
     def send_listing(self, listing: Listing) -> bool:
         """Envía un anuncio. Nunca lanza excepciones: devuelve False si falla."""
         message = self._build_message(listing)
@@ -76,6 +82,37 @@ class TelegramNotifier:
         }
         return self._post("sendPhoto", payload)
 
+    def send_text(self, text: str) -> bool:
+        """Envía un mensaje suelto (respuestas a comandos). No lanza excepciones."""
+        return self._send_message(text)
+
+    def get_updates(self, offset: int | None = None, limit: int = 100) -> list[dict] | None:
+        """Mensajes pendientes dirigidos al bot, o None si la consulta falló.
+
+        Sin long polling (`timeout=0`): el bot no es un proceso persistente,
+        cada ciclo consulta lo que haya pendiente y sale. Telegram descarta
+        los updates anteriores a `offset`, así que pasar el último visto + 1
+        es lo que evita reprocesar comandos ya atendidos.
+        """
+        payload: dict[str, object] = {
+            "timeout": 0,
+            "limit": limit,
+            # Un comando corregido a mano (editar el mensaje) también vale.
+            "allowed_updates": ["message", "edited_message"],
+        }
+        if offset is not None:
+            payload["offset"] = offset
+
+        data = self._call("getUpdates", payload)
+        if data is None:
+            return None
+
+        result = data.get("result")
+        if not isinstance(result, list):
+            logger.error("Telegram: getUpdates devolvió un 'result' inesperado: %r", result)
+            return None
+        return [update for update in result if isinstance(update, dict)]
+
     def _send_message(self, text: str) -> bool:
         payload = {
             "chat_id": self._chat_id,
@@ -85,6 +122,10 @@ class TelegramNotifier:
         return self._post("sendMessage", payload)
 
     def _post(self, method: str, payload: dict) -> bool:
+        return self._call(method, payload) is not None
+
+    def _call(self, method: str, payload: dict) -> dict | None:
+        """Llama a la Bot API. Devuelve el JSON de respuesta, o None si falló."""
         url = API_BASE.format(token=self._bot_token, method=method)
         attempt = 0
         while True:
@@ -93,7 +134,7 @@ class TelegramNotifier:
                 response = httpx.post(url, json=payload, timeout=REQUEST_TIMEOUT)
             except httpx.HTTPError as exc:
                 logger.error("Telegram: fallo de red/HTTP en %s: %s", method, exc)
-                return False
+                return None
 
             if response.status_code == 429 and attempt < MAX_FLOOD_RETRIES:
                 attempt += 1
@@ -110,15 +151,15 @@ class TelegramNotifier:
                 data = response.json()
             except httpx.HTTPError as exc:
                 logger.error("Telegram: fallo de red/HTTP en %s: %s", method, exc)
-                return False
+                return None
             except ValueError as exc:
                 logger.error("Telegram: %s no devolvió JSON válido: %s", method, exc)
-                return False
+                return None
 
-            if not data.get("ok"):
+            if not isinstance(data, dict) or not data.get("ok"):
                 logger.error("Telegram: %s respondió sin éxito: %s", method, data)
-                return False
-            return True
+                return None
+            return data
 
     def _throttle(self) -> None:
         if self._last_sent_at is not None:

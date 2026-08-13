@@ -78,6 +78,57 @@ búsqueda) y, si quieres, los parámetros de `scraping` (ver comentarios en el
 propio fichero). Los valores por defecto ya respetan el rate limiting mínimo
 exigido por `CLAUDE.md`.
 
+## Comandos de Telegram
+
+Para lo que se cambia a menudo —qué producto vigilar y a qué precio— no hace
+falta tocar `config.yaml` ni volver a desplegar: se le escribe al bot.
+
+| Comando | Efecto |
+|---|---|
+| `/producto xbox series x` | cambia el producto que se busca |
+| `/precio 600` | precio máximo, en € |
+| `/preciomin 250` | precio mínimo, en € |
+| `/estado` | muestra qué se está vigilando ahora mismo |
+| `/reset` | descarta los cambios y vuelve a `config.yaml` |
+| `/ayuda` | lista de comandos |
+
+Ejemplo: pasar de vigilar una PS5 a menos de 350 € a una Xbox a menos de
+600 € son dos mensajes, `/producto xbox series x` y `/precio 600`.
+
+Detalles que conviene tener claros:
+
+- **El bot no está escuchando todo el rato.** No es un proceso persistente:
+  mira el chat al principio de cada ciclo, aplica lo que encuentre y sale.
+  Con el cron de GitHub Actions (cada 30 min) un comando puede tardar eso en
+  contestarse. El cambio sí afecta ya al ciclo en el que se lee.
+- Los cambios se guardan en la tabla `settings` de `data/snipebot.db` y
+  sobreviven a los reinicios; `config.yaml` no se toca y sigue siendo el
+  valor por defecto al que vuelve `/reset`.
+- Se aplican a **todas** las búsquedas de `config.yaml` (pensado para vigilar
+  el mismo producto en varias plataformas).
+- Solo se atienden mensajes del `TELEGRAM_CHAT_ID` configurado; cualquier
+  otro chat que le escriba al bot se ignora y se loguea.
+- Un valor incoherente se rechaza con el motivo y no se guarda (por ejemplo
+  `/precio 100` con un `min_price` de 250: hay que bajar antes el mínimo con
+  `/preciomin`).
+- Un ciclo puede notificar de golpe todos los anuncios que encajen con el
+  producto nuevo; es normal la primera vez tras un `/producto`.
+- **Solo un despliegue debe leer comandos.** `getUpdates` los consume: si el
+  bot corre a la vez en GitHub Actions y en el PC, se roban los mensajes
+  entre ellos. En el que no deba leerlos, usa `--no-commands`.
+
+Para que Telegram ofrezca el menú de comandos al escribir `/`, díselo una vez
+a [@BotFather](https://t.me/BotFather) con `/setcommands`:
+
+```
+producto - Qué buscar (ej. xbox series x)
+precio - Precio máximo en €
+preciomin - Precio mínimo en €
+estado - Qué se está vigilando
+reset - Volver a config.yaml
+ayuda - Lista de comandos
+```
+
 ## Uso
 
 Ciclo normal (pensado para cron/timer, no para dejarlo corriendo):
@@ -99,7 +150,8 @@ Otras opciones (`python main.py --help`):
 | `--config RUTA` | usa otro `config.yaml` (por defecto `config.yaml`) |
 | `--env-file RUTA` | usa otro `.env` (por defecto `.env`) |
 | `--db RUTA` | sobrescribe `database_path` de la config |
-| `--dry-run` | no escribe en la BD ni llama a Telegram |
+| `--dry-run` | no escribe en la BD ni llama a Telegram (tampoco lee comandos) |
+| `--no-commands` | no lee los comandos pendientes de Telegram; sí aplica los ya guardados |
 | `--verbose` | log en `DEBUG` |
 
 Códigos de salida: `0` ok, `1` configuración inválida, `2` fallo total del
@@ -191,6 +243,21 @@ lanzando desde working directories distintos con rutas relativas).
 anterior murió sin limpiar su lock. El lock se considera obsoleto (y se
 descarta solo) pasados 15 minutos; si necesitas desbloquear antes, borra a
 mano el fichero `<database_path sin extensión>.lock`.
+
+**Un comando de Telegram no hace nada.** Por orden: (1) ¿ha corrido ya un
+ciclo desde que lo enviaste? Solo se leen al arrancar el ciclo, no al
+instante. (2) Mira el log del ciclo: un comando leído se loguea como
+`Comando recibido: /...`, y uno de otro chat como `Mensaje ignorado`. (3) Si
+hay dos despliegues activos (Actions y PC), uno le está robando los mensajes
+al otro: deja `--no-commands` en el que no deba leerlos. (4) `/estado`
+siempre responde con lo que está vigilando de verdad; si ahí sale lo
+esperado, el comando sí se aplicó.
+
+**Un cambio de producto se pierde entre ciclos.** Los ajustes viven en
+`data/snipebot.db`, así que en GitHub Actions dependen de que el paso
+"Guardar historico de deduplicacion" comitee la BD. Es el mismo mecanismo que
+la deduplicación: si se repiten anuncios ya notificados, también se estarán
+perdiendo los ajustes (ver el último punto de esta sección).
 
 **Fallos de Telegram.** Se loguean como error pero no tumban el ciclo ni
 marcan el anuncio como notificado: se reintentará notificarlo en el próximo

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yaml
@@ -74,8 +75,8 @@ def _as_number(value: object, field_name: str, context: str) -> float:
     return float(value)
 
 
-def _parse_search(raw: dict, index: int) -> SearchConfig:
-    context = f"searches[{index}]"
+def _parse_search(raw: dict, index: int, context: str | None = None) -> SearchConfig:
+    context = context or f"searches[{index}]"
     _require(isinstance(raw, dict), f"{context}: debe ser un objeto, recibido {raw!r}")
 
     platform = raw.get("platform")
@@ -150,6 +151,38 @@ def _parse_search(raw: dict, index: int) -> SearchConfig:
         min_condition=min_condition,
         max_results=max_results,
     )
+
+
+# Campos de una búsqueda que se pueden cambiar en caliente desde Telegram
+# (ver commands.py). Todo lo demás solo se toca en config.yaml.
+OVERRIDABLE_FIELDS: tuple[str, ...] = ("query", "price_threshold", "min_price")
+
+
+def apply_search_overrides(
+    search: SearchConfig,
+    overrides: Mapping[str, object],
+    context: str = "ajuste",
+) -> SearchConfig:
+    """Devuelve una copia de `search` con `overrides` aplicados y revalidada.
+
+    Pasa por el mismo `_parse_search` que config.yaml, de modo que un valor
+    que llega por Telegram no puede dejar la búsqueda en un estado que el
+    fichero de configuración habría rechazado (precio negativo, mínimo por
+    encima del máximo...). Lanza ConfigError si el resultado no es válido.
+    """
+    if not overrides:
+        return search
+
+    raw = asdict(search)
+    for field_name, value in overrides.items():
+        _require(
+            field_name in OVERRIDABLE_FIELDS,
+            f"{context}: '{field_name}' no se puede cambiar desde Telegram "
+            f"(cambiables: {', '.join(OVERRIDABLE_FIELDS)})",
+        )
+        raw[field_name] = value
+
+    return _parse_search(raw, 0, context=context)
 
 
 def _parse_scraping(raw: dict | None) -> ScrapingConfig:

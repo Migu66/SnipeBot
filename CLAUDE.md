@@ -29,10 +29,12 @@ constantemente.
 scrapers/          -> un módulo por plataforma (wallapop.py, vinted.py)
                        cada uno expone search(query) -> list[Listing]
 filters.py          -> aplica umbral de precio y rating sobre los Listing
-storage.py          -> SQLite: tabla `notified_listings` para dedup + histórico
-notifier.py         -> envío de mensajes a Telegram (Bot API)
+storage.py          -> SQLite: `notified_listings` (dedup) + `settings` (ajustes)
+notifier.py         -> cliente de la Bot API: envío de avisos y getUpdates
+commands.py         -> comandos de Telegram (/producto, /precio...) y su
+                       persistencia como overrides sobre config.yaml
 config.py           -> carga de .env / config.yaml (búsquedas, umbrales, tokens)
-main.py             -> orquesta: scrape -> filter -> dedup -> notify
+main.py             -> orquesta: comandos -> scrape -> filter -> dedup -> notify
 ```
 
 Cada scraper debe devolver una lista de objetos `Listing` con, como mínimo:
@@ -75,7 +77,8 @@ class Listing:
 ## Deduplicación
 
 - Tabla SQLite `notified_listings(id TEXT PRIMARY KEY, platform TEXT,
-  price REAL, notified_at TIMESTAMP)`.
+  price REAL, notified_at TIMESTAMP)`. La misma BD tiene además
+  `settings(key, value, updated_at)` para los ajustes de Telegram.
 - Antes de notificar, comprobar si `(platform, id)` ya existe.
 - Insertar inmediatamente después de notificar con éxito (no antes, para no
   perder anuncios si falla el envío a Telegram).
@@ -89,6 +92,32 @@ class Listing:
   `sendMessage`.
 - Un fallo en el envío no debe tumbar el ciclo entero: loguear y continuar
   con el resto de resultados.
+
+## Comandos de Telegram (commands.py)
+
+El producto y el precio se cambian desde el chat, sin tocar el código ni
+`config.yaml`:
+
+- `/producto <texto>`, `/precio <n>`, `/preciomin <n>`, `/estado`, `/reset`,
+  `/ayuda`.
+- El bot **no es un proceso persistente**: cada ciclo llama a `getUpdates` al
+  arrancar (sin long polling), atiende lo pendiente y sigue. Un comando se
+  aplica en el ciclo que lo lee, no antes.
+- Los ajustes se guardan como overrides en la tabla `settings`
+  (`override.query`, `override.price_threshold`, `override.min_price`), no
+  reescribiendo `config.yaml`: la BD es el único estado que ya sobrevive
+  entre ejecuciones en todos los despliegues (Actions la comitea). `/reset`
+  borra los overrides y devuelve el control a `config.yaml`.
+- Todo valor que llegue por Telegram se revalida con el mismo `_parse_search`
+  que valida `config.yaml` (`config.apply_search_overrides`). Si no es
+  válido, no se guarda y se contesta el motivo. Los campos cambiables están
+  en `config.OVERRIDABLE_FIELDS`: para añadir uno nuevo, basta con incluirlo
+  ahí y darle su comando.
+- El offset de `getUpdates` se persiste (`telegram.updates_offset`) para no
+  reprocesar comandos ya atendidos. Los mensajes de chats distintos del
+  `TELEGRAM_CHAT_ID` configurado se ignoran, pero también se consumen.
+- Solo una instancia debe leer comandos: `getUpdates` los consume. Para el
+  resto, `main.py --no-commands`.
 
 ## Configuración
 
@@ -157,11 +186,13 @@ TELEGRAM_CHAT_ID=...
       es.wallapop.com/app/search) y comparar contra lo que ya hay.
 - [x] Filtro + dedup
 - [x] Notificador Telegram
+- [x] Comandos de Telegram para cambiar producto/precio sin tocar el código
+      (`commands.py`; ver sección "Comandos de Telegram")
 - [x] main.py orquestando todo
 - [x] Cron / systemd timer configurado (`deploy/snipebot.service` +
       `deploy/snipebot.timer`) y Tarea Programada de Windows
       (`deploy/register-task.ps1`)
-- [x] Tests (`pytest` + `respx`, 52 tests, verde sin red real)
+- [x] Tests (`pytest` + `respx`, verde sin red real)
 - [ ] Crear `config.yaml` y `.env` reales a partir de los `.example` (no se
       commitean)
 - [ ] Primer ciclo real de punta a punta contra las dos plataformas (Vinted

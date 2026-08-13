@@ -1,4 +1,6 @@
-# config.yaml está en .gitignore: es tuyo y no se commitea.
+# Valores por defecto. `query`, `price_threshold` y `min_price` se pueden
+# cambiar desde Telegram (/producto, /precio, /preciomin) sin tocar esto;
+# /reset devuelve el control a lo que ponga aquí.
 
 searches:
   - platform: vinted

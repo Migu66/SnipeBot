@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
+import respx
+
 import main as main_module
 from config import AppConfig, ScrapingConfig, SearchConfig, TelegramConfig
 from storage import Storage
+
+BOT_BASE = "https://api.telegram.org/bot123:ABC"
 
 
 class FakeScraper:
@@ -124,6 +129,95 @@ def test_one_search_failing_does_not_stop_the_others(tmp_path, monkeypatch, make
     assert failures == 1
     assert len(sent) == 1
     assert sent[0].id == "ok"
+
+
+def _write_cli_files(tmp_path, db_path, query="ps5", price_threshold=350):
+    config_yaml = tmp_path / "config.yaml"
+    config_yaml.write_text(
+        f"""
+searches:
+  - platform: vinted
+    query: "{query}"
+    price_threshold: {price_threshold}
+    seller_rating_threshold: 4.5
+
+database_path: {db_path.as_posix()}
+""",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("TELEGRAM_BOT_TOKEN=123:ABC\nTELEGRAM_CHAT_ID=999\n", encoding="utf-8")
+    return config_yaml, env_file
+
+
+@respx.mock
+def test_telegram_command_changes_the_search_in_the_same_cycle(tmp_path, monkeypatch, make_listing):
+    """Un /producto enviado antes del ciclo ya cambia lo que se busca en ese ciclo."""
+    db_path = tmp_path / "data" / "snipebot.db"
+    config_yaml, env_file = _write_cli_files(tmp_path, db_path)
+
+    respx.post(f"{BOT_BASE}/getUpdates").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "result": [
+                    {
+                        "update_id": 42,
+                        "message": {
+                            "message_id": 1,
+                            "chat": {"id": 999},
+                            "text": "/producto xbox series x",
+                        },
+                    }
+                ],
+            },
+        )
+    )
+    respx.post(f"{BOT_BASE}/sendMessage").mock(return_value=httpx.Response(200, json={"ok": True}))
+    respx.post(f"{BOT_BASE}/sendPhoto").mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    queries: list[str] = []
+
+    class RecordingScraper(FakeScraper):
+        def search(self, query, search_config):
+            queries.append(query)
+            return self._listings
+
+    listing = make_listing(platform="vinted", price=300, seller_rating=4.8, seller_review_count=10)
+    monkeypatch.setattr(
+        main_module, "get_scraper", lambda platform, scraping_config: RecordingScraper([listing])
+    )
+
+    exit_code = main_module.main(["--config", str(config_yaml), "--env-file", str(env_file)])
+
+    assert exit_code == 0
+    assert queries == ["xbox series x"]
+
+    # Y sigue vigente en el siguiente ciclo, sin volver a mandar el comando.
+    respx.post(f"{BOT_BASE}/getUpdates").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": []})
+    )
+    main_module.main(["--config", str(config_yaml), "--env-file", str(env_file)])
+    assert queries == ["xbox series x", "xbox series x"]
+
+
+@respx.mock
+def test_no_commands_flag_skips_telegram_polling(tmp_path, monkeypatch, make_listing):
+    db_path = tmp_path / "data" / "snipebot.db"
+    config_yaml, env_file = _write_cli_files(tmp_path, db_path)
+
+    updates = respx.post(f"{BOT_BASE}/getUpdates").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": []})
+    )
+    monkeypatch.setattr(main_module, "get_scraper", lambda platform, scraping_config: FakeScraper([]))
+
+    exit_code = main_module.main(
+        ["--config", str(config_yaml), "--env-file", str(env_file), "--no-commands"]
+    )
+
+    assert exit_code == 0
+    assert not updates.called
 
 
 def test_dry_run_cli_does_not_touch_database(tmp_path, monkeypatch, make_listing):
